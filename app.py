@@ -1,83 +1,93 @@
 import streamlit as st
-import pandas as pd
-import pickle
 import shap
-import xgboost as xgb
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
+from streamlit_shap import st_shap
 
-# HTML and title
-html_temp = """
-<div style="background-color:yellow;padding:1.5px">
-<h1 style="color:black;text-align:center;">Used Car Price Prediction</h1>
-</div><br>"""
-st.markdown(html_temp, unsafe_allow_html=True)
+# Load the dataset (assuming it's in the same directory)
+customer = pd.read_csv("Customer Churn.csv")
 
-st.write("\n\n"*2)
+# Preprocessing
+X = customer.drop("Churn", axis=1)
+y = customer.Churn
 
-# Load the model and explainer
-filename = 'Auto_Price_Pred_Model'
-model = pickle.load(open(filename, 'rb'))
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
-# Load training data to fit the explainer
-# Replace 'train_data.csv' with your actual training data file
-train_data = pd.read_csv('train_data.csv')  # Ensure this file has the same features as used for prediction
-X_train = train_data.drop('target', axis=1)  # Replace 'target' with the actual target column name
+# Model training
+clf = RandomForestClassifier()
+clf.fit(X_train, y_train)
 
-explainer = shap.TreeExplainer(model)
+# Make predictions
+y_pred = clf.predict(X_test)
 
-with st.sidebar:
-    st.subheader('Car Specs to Predict Price')
+# SHAP explainer
+explainer = shap.TreeExplainer(clf)
+shap_values = explainer.shap_values(X_test)
 
-    make_model = st.sidebar.selectbox("Model Selection", ("Audi A3", "Audi A1", "Opel Insignia", "Opel Astra", "Opel Corsa", "Renault Clio", "Renault Espace", "Renault Duster"))
-    hp_kW = st.sidebar.number_input("Horse Power:", min_value=40, max_value=294, value=120, step=5)
-    age = st.sidebar.number_input("Age:", min_value=0, max_value=3, value=0, step=1)
-    km = st.sidebar.number_input("km:", min_value=0, max_value=317000, value=10000, step=5000)
-    Gears = st.sidebar.number_input("Gears:", min_value=5, max_value=8, value=5, step=1)
-    Gearing_Type = st.sidebar.radio("Gearing Type", ("Manual", "Automatic", "Semi-automatic"))
+# Streamlit app
+st.title("SHAP Analysis for Customer Churn")
 
-    my_dict = {"make_model": make_model, "hp_kW": hp_kW, "age": age, "km": km, "Gears": Gears, "Gearing_Type": Gearing_Type}
-    df = pd.DataFrame.from_dict([my_dict])
+# Part 1: General SHAP Analysis
+st.header("Part 1: General SHAP Analysis")
+st.dataframe(classification_report(y_pred, y_test,output_dict=True))
 
-    cols = {
-        "make_model": "Car Model",
-        "hp_kW": "Horse Power",
-        "age": "Age",
-        "km": "km Traveled",
-        "Gears": "Gears",
-        "Gearing_Type": "Gearing Type"
-    }
+# Summary plot
+st.subheader("Summary Plot")
+fig, ax = plt.subplots()
+shap.summary_plot(shap_values, X_test, show=False)
+st.pyplot(fig)
 
-    df_show = df.copy()
-    df_show.rename(columns=cols, inplace=True)
-    st.write("Selected Specs: \n")
-    st.table(df_show)
+# Summary plot for class 0
+st.subheader("Summary Plot for Class 0")
+fig, ax = plt.subplots()
+shap.summary_plot(shap_values[0], X_test, show=False)
+st.pyplot(fig)
 
-    if st.button("Predict"):
-        pred = model.predict(df)
-        col1, col2 = st.columns(2)
-        col1.write("The estimated value of car price is €")
-        col2.write(pred[0].astype(int))
+# Part 2: Individual Input Prediction & Explanation
+st.header("Part 2: Individual Input Prediction & Explanation")
 
-        # SHAP explanation
-        st.subheader("SHAP Explanation")
+# Input fields for features
+input_data = {}
+for feature in X.columns:
+    if feature in ['Call  Failure', 'Complains', 'Subscription  Length', 'Status' 'Seconds of Use',
+                   'Frequency of use', 'Frequency of SMS', 'Distinct Called Numbers', 'Age Group', 'Age']:
+        input_data[feature] = st.number_input(f"Enter {feature}:", value=int(X_test[feature].mean()), step=1)
+    else:  # For other features, keep the original input type
+        input_data[feature] = st.number_input(f"Enter {feature}:", value=X_test[feature].mean())
 
-        # Ensure input data format is the same as the training data
-        # Adjust feature names if needed
-        feature_names = X_train.columns
-        df_for_shap = df[feature_names]
 
-        # Generate SHAP values
-        shap_values = explainer.shap_values(df_for_shap)
+# Create a DataFrame from input data
+input_df = pd.DataFrame(input_data, index=[0])
 
-        # Summary plot
-        st.subheader("SHAP Summary Plot")
-        st_shap(shap.summary_plot(shap_values, df_for_shap, show=False))
+# Make prediction
+prediction = clf.predict(input_df)[0]
+probability = clf.predict_proba(input_df)[0][1]  # Probability of churn
 
-        # Force plot
-        st.subheader("SHAP Force Plot")
-        st_shap(shap.force_plot(explainer.expected_value, shap_values[0], df_for_shap, show=False))
+# Display prediction
+st.write(f"**Prediction:** {'Churn' if prediction == 1 else 'No Churn'}")
+st.write(f"**Churn Probability:** {probability:.2f}")
 
-        # Decision plot
-        st.subheader("SHAP Decision Plot")
-        st_shap(shap.decision_plot(explainer.expected_value, shap_values[0], df_for_shap, feature_names=feature_names))
+# SHAP explanation for the input
+shap_values_input = explainer.shap_values(input_df)
 
-st.write("\n\n")
+
+# Force plot
+st.subheader("Force Plot")
+# fig, ax = plt.subplots()
+# shap.plots.force(explainer.expected_value[0], shap_values_input[0,:], input_df.iloc[0,:], matplotlib=True)
+st_shap(shap.force_plot(explainer.expected_value[0], shap_values_input[0], input_df), height=400, width=1000)
+
+# st.write(input_df)
+# st.pyplot(fig,bbox_inches='tight')
+
+# Decision plot
+st.subheader("Decision Plot")
+# fig, ax = plt.subplots()
+# shap.decision_plot(explainer.expected_value[0], shap_values_input[0], X_test.columns)
+st_shap(shap.decision_plot(explainer.expected_value[0], shap_values_input[0], X_test.columns))
+# st.pyplot(fig)
